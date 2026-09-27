@@ -7,6 +7,15 @@ trusted as given, which is acceptable for a first implementation on a
 private network. Structured so auth can be layered in later (e.g. a
 dependency that validates device_id against a request header/token)
 without changing this shape.
+
+Protocol version (Step 2 — see node/protocol.py and
+docs/PROTOCOL_CONTRACT.md): every request declares a protocol_version
+(defaulting to the current one, so an older payload with no such field
+still validates); an unsupported version is rejected here as a clean
+422, before it ever reaches sync_service — a whole-request-level
+concern, distinct from per-event validation (event_type/payload shape),
+which happens per-item inside sync_service so one malformed event never
+fails an entire batch.
 """
 from typing import Any, List, Optional
 
@@ -14,6 +23,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field, validator
 
 from node import clock
+from node.protocol import PROTOCOL_VERSION, is_version_supported
 from services import sync_service
 
 router = APIRouter()
@@ -35,6 +45,11 @@ class SyncEventIn(BaseModel):
     payload: Any = Field(default_factory=dict)
     occurred_at: str
     device_id: Optional[str] = Field(None, max_length=64)   # defaults to the request's device_id
+    # Step 2 (docs/PROTOCOL_CONTRACT.md) — which version of event_type's
+    # payload schema this event was produced against; None lets
+    # node/protocol.py fall back to the registered type's current
+    # schema_version.
+    schema_version: Optional[int] = None
 
     @validator("occurred_at")
     def _v_occurred_at(cls, v):
@@ -58,6 +73,15 @@ class SyncIn(BaseModel):
     limit: int = Field(500, ge=1, le=1000)
     events: List[SyncEventIn] = Field(default_factory=list)
     memory: List[SyncMemoryIn] = Field(default_factory=list)
+    # Step 2 (docs/PROTOCOL_CONTRACT.md) — protocol version this client
+    # speaks. Absent -> treated as version 1 by FastAPI's default here.
+    protocol_version: int = Field(default=PROTOCOL_VERSION)
+
+    @validator("protocol_version")
+    def _v_protocol_version(cls, v):
+        if not is_version_supported(v):
+            raise ValueError(f"protocol_version {v!r} is not supported by this server")
+        return v
 
 
 @router.post("/sync")
@@ -69,6 +93,7 @@ def post_sync(body: SyncIn) -> dict:
             "payload": e.payload,
             "occurred_at": e.occurred_at,
             "event_uid": e.event_uid,
+            "schema_version": e.schema_version,
         }
         for e in body.events
     ]
