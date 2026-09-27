@@ -178,6 +178,14 @@ register_event_type(
     description="No-op connectivity/idempotency check event; carries no application data.",
 )
 
+# Mirrors services/node/protocol.py's registration (Step 3) — MayaNode
+# and MayaVE independently declare the same event type per
+# docs/PROTOCOL_CONTRACT.md; there is no shared code between them.
+register_event_type(
+    "mayave.turn_completed", schema_version=1, required_fields={"intent": str},
+    description="A MayaVE conversation turn was resolved to the given intent.",
+)
+
 
 def _check_json_serializable(payload: Any) -> None:
     try:
