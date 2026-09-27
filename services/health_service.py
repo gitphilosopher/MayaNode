@@ -2,7 +2,7 @@
 
 A check is a zero-argument function: it passes if it returns normally
 (optionally returning a dict of extra details) and fails if it raises.
-Other modules add checks with register_check(), e.g. later:
+Other modules add checks with register_check(), e.g.:
 
     health_service.register_check("sqlite", database.check)
 """
