@@ -17,7 +17,14 @@ _NAME_RE = re.compile(r"^\d{3}_[a-z0-9_]+\.sql$")
 
 
 def run() -> list[str]:
-    """Apply pending migrations; return the versions applied on this call."""
+    """Apply pending migrations; return the versions applied on this call.
+
+    Ensures config.DB_PATH's parent directory exists first, so a custom
+    MAYANODE_DB pointed at a not-yet-created directory (a fresh install,
+    or a path on external storage) works rather than failing with a
+    confusing "unable to open database file"."""
+    config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     files = sorted(config.MIGRATIONS_DIR.glob("*.sql"))
     bad = [f.name for f in files if not _NAME_RE.match(f.name)]
     if bad:
@@ -25,6 +32,7 @@ def run() -> list[str]:
 
     conn = connect()
     applied_now: list[str] = []
+    current_version = None
     try:
         mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         if mode.lower() != "wal":
@@ -40,6 +48,7 @@ def run() -> list[str]:
             version = f.stem   # safe to inline: validated by _NAME_RE above
             if version in done:
                 continue
+            current_version = version
             sql = f.read_text(encoding="utf-8")
             conn.executescript(
                 f"BEGIN;\n{sql}\n;\n"
@@ -49,8 +58,12 @@ def run() -> list[str]:
             )
             applied_now.append(version)
             log.info(f"applied migration {version}")
-    except BaseException:
+    except BaseException as e:
         conn.rollback()   # discard a half-run migration transaction
+        if current_version:
+            log.critical(f"migration {current_version} failed and was rolled back: {e}")
+        else:
+            log.critical(f"migration startup failed before any file ran: {e}")
         raise
     finally:
         conn.close()
